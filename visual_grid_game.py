@@ -1,7 +1,7 @@
 # visual_grid_game.py
 import random
 import tkinter as tk
-from agent import SimpleReflexAgent, ModelBasedAgent
+from agent import SimpleReflexAgent, ModelBasedAgent, SearchAgent
 
 
 class VisualGridHuntGame:
@@ -62,6 +62,11 @@ class VisualGridHuntGame:
             'wall_ahead': off_grid or front in self.walls,
             'food_here': tuple(self.agent_pos) in self.food_positions,
             'facing': self.facing,
+            # Lab 3, Step 1.1: expose the WORLD MODEL so a planning agent can
+            # simulate future states offline (the abstract search problem).
+            'grid_size': (self.width, self.height),
+            'walls': list(self.walls),
+            'all_food': list(self.food_positions),
         }
 
     def execute_action(self, action: str):
@@ -123,7 +128,12 @@ class GridGameGUI:
 
         # Lab 2: swap between SimpleReflexAgent() and ModelBasedAgent() to compare behaviour.
         #self.agent = SimpleReflexAgent()
-        self.agent = ModelBasedAgent()
+        #self.agent = ModelBasedAgent()
+
+        # Lab 3, Step 1.3: the planning agent. Change SearchAgent.active_algo to
+        # 'BFS', 'DFS', or 'UCS' below to compare the paths it plans.
+        self.agent = SearchAgent()
+        self.agent.active_algo = 'BFS'
 
         # Dynamically calculate cell size so the total canvas fits nicely within a 600x600 window ceiling
         max_canvas_dim = 600

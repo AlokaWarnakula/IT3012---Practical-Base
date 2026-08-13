@@ -1,9 +1,12 @@
 # agent.py
 import random
+from collections import deque   # Lab 3: FIFO frontier for BFS
+import heapq                    # Lab 3: priority-queue frontier for UCS
 
 # Movement deltas and turn tables shared by both agents.
 DELTAS = {'Up': (0, 1), 'Down': (0, -1), 'Left': (-1, 0), 'Right': (1, 0)}
 TURN_RIGHT = {'Up': 'Right', 'Right': 'Down', 'Down': 'Left', 'Left': 'Up'}
+TURN_LEFT = {'Up': 'Left', 'Left': 'Down', 'Down': 'Right', 'Right': 'Up'}
 
 
 class SimpleReflexAgent:
@@ -80,7 +83,146 @@ class ModelBasedAgent:
 
 
 class SearchAgent:
-    """Practical 3 (next lab) - Problem-Solving Agent. Placeholder for now."""
+    """Practical 3 - Goal-Based / Problem-Solving (Planning) Agent.
 
+    Unlike the reflex agents, this agent is given the WORLD MODEL in its percept
+    ('grid_size', 'walls', 'all_food') and uses UNINFORMED SEARCH to compute a
+    complete plan (a sequence of moves) OFFLINE before acting. It then executes
+    that plan one step at a time.
+
+    The three searches share one node-expansion loop; only the FRONTIER data
+    structure changes:
+        BFS -> FIFO queue      (deque.popleft)  -> shallowest node first
+        DFS -> LIFO stack      (list.pop)        -> deepest node first
+        UCS -> priority queue  (heapq.heappop)   -> lowest path cost g(n) first
+    A `reached` set makes every search a GRAPH search (no re-expanding a state),
+    which is what stops DFS from looping forever.
+    """
+
+    def __init__(self):
+        # Step 1.3: planning state.
+        self.plan = []                 # queued game actions ('Forward'/'Left'/'Right')
+        self.active_algo = 'BFS'       # switch to 'DFS' / 'UCS' to compare paths
+        # The percept never reveals the true position, so — like the model-based
+        # agent — we dead-reckon our own location, starting at the spawn tile.
+        self.pos = (0, 0)
+        self.facing = 'Right'
+
+    # ---- Shared helpers -------------------------------------------------
+    @staticmethod
+    def _neighbors(node, walls, grid_size):
+        """Yield (direction, next_cell) for the 4 legal moves from `node`."""
+        w, h = grid_size
+        for d, (dx, dy) in DELTAS.items():
+            nxt = (node[0] + dx, node[1] + dy)
+            if 0 <= nxt[0] < w and 0 <= nxt[1] < h and nxt not in walls:
+                yield d, nxt
+
+    @staticmethod
+    def _reconstruct(parent, start, goal):
+        """Walk parent pointers back from goal to start -> list of directions."""
+        directions = []
+        node = goal
+        while node != start:
+            prev, d = parent[node]
+            directions.append(d)
+            node = prev
+        directions.reverse()
+        return directions
+
+    # ---- Step 1.2: the three uninformed searches ------------------------
     def bfs_search(self, start, goal, walls, grid_size):
-        raise NotImplementedError("BFS is implemented in Practical 3.")
+        """Breadth-First Search. FIFO frontier -> optimal on unit-cost grid."""
+        frontier = deque([start])          # FIFO queue
+        reached = {start}                  # graph-search: visited states
+        parent = {}                        # child -> (parent, direction taken)
+        while frontier:
+            node = frontier.popleft()      # <-- shallowest first
+            if node == goal:
+                return self._reconstruct(parent, start, goal)
+            for d, nxt in self._neighbors(node, walls, grid_size):
+                if nxt not in reached:
+                    reached.add(nxt)
+                    parent[nxt] = (node, d)
+                    frontier.append(nxt)
+        return []                          # no path
+
+    def dfs_search(self, start, goal, walls, grid_size):
+        """Depth-First Search. LIFO frontier -> deep, winding, NOT optimal."""
+        frontier = [start]                 # LIFO stack
+        reached = {start}
+        parent = {}
+        while frontier:
+            node = frontier.pop()          # <-- deepest first
+            if node == goal:
+                return self._reconstruct(parent, start, goal)
+            for d, nxt in self._neighbors(node, walls, grid_size):
+                if nxt not in reached:
+                    reached.add(nxt)
+                    parent[nxt] = (node, d)
+                    frontier.append(nxt)
+        return []
+
+    def ucs_search(self, start, goal, walls, grid_size):
+        """Uniform-Cost Search. Priority queue ordered by g(n) (path cost)."""
+        counter = 0                        # tie-breaker so heapq never compares tuples
+        frontier = [(0, counter, start)]   # (cost, seq, node)
+        best_cost = {start: 0}
+        parent = {}
+        while frontier:
+            cost, _, node = heapq.heappop(frontier)   # <-- lowest g(n) first
+            if node == goal:
+                return self._reconstruct(parent, start, goal)
+            if cost > best_cost.get(node, float('inf')):
+                continue                   # stale, cheaper path already expanded
+            for d, nxt in self._neighbors(node, walls, grid_size):
+                new_cost = cost + 1        # every step costs 1 in this grid
+                if new_cost < best_cost.get(nxt, float('inf')):
+                    best_cost[nxt] = new_cost
+                    parent[nxt] = (node, d)
+                    counter += 1
+                    heapq.heappush(frontier, (new_cost, counter, nxt))
+        return []
+
+    # ---- Step 1.3: plan once, then execute step-by-step -----------------
+    def _directions_to_actions(self, directions):
+        """Turn a cardinal path (['Up','Right',...]) into this turn-based
+        environment's actions, inserting rotations before each 'Forward'."""
+        actions = []
+        facing = self.facing
+        for target in directions:
+            while facing != target:        # rotate toward the target heading
+                if TURN_RIGHT[facing] == target:
+                    actions.append('Right'); facing = TURN_RIGHT[facing]
+                elif TURN_LEFT[facing] == target:
+                    actions.append('Left'); facing = TURN_LEFT[facing]
+                else:                       # 180 deg turn
+                    actions.append('Right'); facing = TURN_RIGHT[facing]
+            actions.append('Forward')
+        return actions
+
+    def sense_and_act(self, percept: dict) -> str:
+        self.facing = percept.get('facing', self.facing)  # resync heading with env
+
+        # 1) If we have no plan, form one with the selected search algorithm.
+        if not self.plan:
+            foods = [tuple(f) for f in percept.get('all_food', [])]
+            if not foods:
+                return 'Left'                              # nothing left: idle turn
+            # Pick the closest pellet by Manhattan distance.
+            goal = min(foods, key=lambda f: abs(f[0] - self.pos[0]) + abs(f[1] - self.pos[1]))
+            walls = set(map(tuple, percept.get('walls', [])))
+            grid_size = percept.get('grid_size', (0, 0))
+            search = {'BFS': self.bfs_search,
+                      'DFS': self.dfs_search,
+                      'UCS': self.ucs_search}[self.active_algo]
+            directions = search(self.pos, goal, walls, grid_size)
+            self.plan = self._directions_to_actions(directions)
+            # Executing the whole plan lands us on the pellet: dead-reckon there.
+            self.pos = goal
+
+        if not self.plan:                                  # goal unreachable
+            return 'Left'
+
+        # 2) Execute the plan one action at a time.
+        return self.plan.pop(0)
