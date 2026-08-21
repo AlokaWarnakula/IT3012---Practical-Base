@@ -130,10 +130,10 @@ class GridGameGUI:
         #self.agent = SimpleReflexAgent()
         #self.agent = ModelBasedAgent()
 
-        # Lab 3, Step 1.3: the planning agent. Change SearchAgent.active_algo to
-        # 'BFS', 'DFS', or 'UCS' below to compare the paths it plans.
+        # Lab 3/4, Step 1.3: the planning agent. Change SearchAgent.active_algo to
+        # 'BFS', 'DFS', 'UCS', or 'AStar' below to compare the paths it plans.
         self.agent = SearchAgent()
-        self.agent.active_algo = 'BFS'
+        self.agent.active_algo = 'AStar'
 
         # Dynamically calculate cell size so the total canvas fits nicely within a 600x600 window ceiling
         max_canvas_dim = 600

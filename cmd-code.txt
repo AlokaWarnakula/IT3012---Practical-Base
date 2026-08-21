@@ -7,3 +7,7 @@ lab 02
 
 cd "C:\Users\aloka\OneDrive\Desktop\IA Labs\Lab 01\lab02" && python visual_grid_game.py
 cd "C:\Users\aloka\OneDrive\Desktop\IA Labs\Lab 01\lab02" && python -m unittest test_suite.TestPractical1And2_ReflexAgents -v
+
+
+lab 03
+cd "C:\Users\aloka\OneDrive\Desktop\IA Labs\Lab 01"; py visual_grid_game.py

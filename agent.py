@@ -1,7 +1,8 @@
 # agent.py
 import random
+import math                     # Lab 4: straight-line distance for the Euclidean heuristic
 from collections import deque   # Lab 3: FIFO frontier for BFS
-import heapq                    # Lab 3: priority-queue frontier for UCS
+import heapq                    # Lab 3/4: priority-queue frontier for UCS and A*
 
 # Movement deltas and turn tables shared by both agents.
 DELTAS = {'Up': (0, 1), 'Down': (0, -1), 'Left': (-1, 0), 'Right': (1, 0)}
@@ -102,7 +103,7 @@ class SearchAgent:
     def __init__(self):
         # Step 1.3: planning state.
         self.plan = []                 # queued game actions ('Forward'/'Left'/'Right')
-        self.active_algo = 'BFS'       # switch to 'DFS' / 'UCS' to compare paths
+        self.active_algo = 'BFS'       # switch to 'DFS' / 'UCS' / 'AStar' to compare paths
         # The percept never reveals the true position, so — like the model-based
         # agent — we dead-reckon our own location, starting at the spawn tile.
         self.pos = (0, 0)
@@ -129,6 +130,15 @@ class SearchAgent:
             node = prev
         directions.reverse()
         return directions
+
+    # ---- Step 1.1: heuristics for informed search ------------------------
+    def manhattan_distance(self, pos, goal):
+        """h(n) = |x1-x2| + |y1-y2|. Admissible for 4-way (no diagonal) movement."""
+        return abs(pos[0] - goal[0]) + abs(pos[1] - goal[1])
+
+    def euclidean_distance(self, pos, goal):
+        """h(n) = sqrt((x1-x2)^2 + (y1-y2)^2). Straight-line distance."""
+        return math.sqrt((pos[0] - goal[0]) ** 2 + (pos[1] - goal[1]) ** 2)
 
     # ---- Step 1.2: the three uninformed searches ------------------------
     def bfs_search(self, start, goal, walls, grid_size):
@@ -184,6 +194,34 @@ class SearchAgent:
                     heapq.heappush(frontier, (new_cost, counter, nxt))
         return []
 
+    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan'):
+        """A* Search. Priority queue ordered by f(n) = g(n) + h(n).
+
+        Like UCS, but each node also carries a heuristic estimate of the
+        remaining distance to the goal, so the search is drawn toward the
+        goal instead of expanding outward evenly in every direction.
+        """
+        heuristic = self.manhattan_distance if heuristic_type == 'manhattan' else self.euclidean_distance
+        h_start = heuristic(start_pos, goal_pos)
+        frontier = [(h_start, 0, start_pos, [])]   # (f_cost, g_cost, current_pos, path_taken)
+        reached_states = set()
+
+        while frontier:
+            f_cost, g_cost, current_pos, path_taken = heapq.heappop(frontier)  # <-- lowest f(n) first
+            if current_pos == goal_pos:
+                return path_taken
+            if current_pos in reached_states:
+                continue                   # stale entry, already expanded via a cheaper route
+            reached_states.add(current_pos)
+
+            for d, nxt in self._neighbors(current_pos, walls, grid_size):
+                if nxt not in reached_states:
+                    g_new = g_cost + 1
+                    h_new = heuristic(nxt, goal_pos)
+                    f_new = g_new + h_newt
+                    heapq.heappush(frontier, (f_new, g_new, nxt, path_taken + [d]))
+        return []                          # no path
+
     # ---- Step 1.3: plan once, then execute step-by-step -----------------
     def _directions_to_actions(self, directions):
         """Turn a cardinal path (['Up','Right',...]) into this turn-based
@@ -215,7 +253,8 @@ class SearchAgent:
             grid_size = percept.get('grid_size', (0, 0))
             search = {'BFS': self.bfs_search,
                       'DFS': self.dfs_search,
-                      'UCS': self.ucs_search}[self.active_algo]
+                      'UCS': self.ucs_search,
+                      'AStar': self.astar_search}[self.active_algo]
             directions = search(self.pos, goal, walls, grid_size)
             self.plan = self._directions_to_actions(directions)
             # Executing the whole plan lands us on the pellet: dead-reckon there.
