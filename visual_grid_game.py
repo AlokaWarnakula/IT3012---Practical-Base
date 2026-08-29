@@ -51,6 +51,9 @@ class VisualGridHuntGame:
         self.steps = 0
         self.collision = False
         self.facing = 'Right'  # Lab 2: agent now has a heading; 'ahead' = the next cell
+        # Lab 5: an inventory item the logic rules reason about. Toggle to False
+        # and the KB can never prove 'SafeToEngage', so nothing is ever infeasible.
+        self.agent_has_dust = True
 
     # Lab 2, Step 1.1: PARTIALLY OBSERVABLE percept.
     # No more global agent_pos. The agent only feels its own tile and the cell it faces.
@@ -67,6 +70,10 @@ class VisualGridHuntGame:
             'grid_size': (self.width, self.height),
             'walls': list(self.walls),
             'all_food': list(self.food_positions),
+            # Lab 5, Step 3.2: percepts the Knowledge Base reasons over. The toxic
+            # traps are the tiles where the enemy (Bloodseeker) is unaccounted for.
+            'has_dust': self.agent_has_dust,
+            'danger_zones': list(self.toxic_traps),
         }
 
     def execute_action(self, action: str):
@@ -132,6 +139,8 @@ class GridGameGUI:
 
         # Lab 3/4, Step 1.3: the planning agent. Change SearchAgent.active_algo to
         # 'BFS', 'DFS', 'UCS', or 'AStar' below to compare the paths it plans.
+        # Lab 5: with 'AStar' the agent now also consults its Knowledge Base and
+        # refuses to plan through tiles where 'Retreat' can be deduced (purple traps).
         self.agent = SearchAgent()
         self.agent.active_algo = 'AStar'
 

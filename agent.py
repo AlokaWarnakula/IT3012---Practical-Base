@@ -3,6 +3,7 @@ import random
 import math                     # Lab 4: straight-line distance for the Euclidean heuristic
 from collections import deque   # Lab 3: FIFO frontier for BFS
 import heapq                    # Lab 3/4: priority-queue frontier for UCS and A*
+from logic_engine import KnowledgeBase   # Lab 5: declarative KB + forward chaining
 
 # Movement deltas and turn tables shared by both agents.
 DELTAS = {'Up': (0, 1), 'Down': (0, -1), 'Left': (-1, 0), 'Right': (1, 0)}
@@ -109,6 +110,19 @@ class SearchAgent:
         self.pos = (0, 0)
         self.facing = 'Right'
 
+        # Lab 5, Step 3.1: the agent's Knowledge Base. The safety constraints
+        # below are stored DECLARATIVELY as Horn clauses, not as if-else
+        # statements buried inside the movement code.
+        self.kb = KnowledgeBase()
+        self.kb.tell_rule(['TargetVisible', 'HasDust'], 'SafeToEngage')
+        self.kb.tell_rule(['SafeToEngage', 'BloodseekerMissing'], 'Retreat')
+
+        # Lab 5: world knowledge refreshed from the percept every tick; it is
+        # what the per-tile facts are built from during the A* expansion.
+        self.has_dust = False       # do we carry Dust of Appearance?
+        self.danger_zones = set()   # tiles where an enemy is unaccounted for
+        self.known_food = []        # pellets currently visible on the map
+
     # ---- Shared helpers -------------------------------------------------
     @staticmethod
     def _neighbors(node, walls, grid_size):
@@ -130,6 +144,35 @@ class SearchAgent:
             node = prev
         directions.reverse()
         return directions
+
+    # ---- Lab 5, Step 3.2: logical feasibility ---------------------------
+    VISION_RADIUS = 4      # how far the Drow Ranger can spot a target from a tile
+
+    def _percepts_for_tile(self, cell):
+        """Translate raw world state into the propositional facts that hold
+        ON THAT SPECIFIC TILE. This is the sensor -> logic boundary."""
+        facts = []
+        # A target is visible from this tile if a pellet is within sight range.
+        if any(self.manhattan_distance(cell, f) <= self.VISION_RADIUS for f in self.known_food):
+            facts.append('TargetVisible')
+        if self.has_dust:
+            facts.append('HasDust')
+        # The enemy (Bloodseeker) is unaccounted for on this tile.
+        if cell in self.danger_zones:
+            facts.append('BloodseekerMissing')
+        return facts
+
+    def is_feasible(self, cell):
+        """Ask the KB to PROVE the tile is safe before A* expands it.
+
+        Reachable = physically walkable (bounds + walls)   -> _neighbors()
+        Feasible  = logically safe (no 'Retreat' deduced)  -> this method
+        """
+        self.kb.clear_facts()                       # facts are per-tile percepts
+        for fact in self._percepts_for_tile(cell):
+            self.kb.tell_fact(fact)                 # TELL the sensor data
+        self.kb.forward_chain()                     # ASK: what follows from it?
+        return 'Retreat' not in self.kb.facts       # Retreat deduced -> infeasible
 
     # ---- Step 1.1: heuristics for informed search ------------------------
     def manhattan_distance(self, pos, goal):
@@ -194,7 +237,8 @@ class SearchAgent:
                     heapq.heappush(frontier, (new_cost, counter, nxt))
         return []
 
-    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan'):
+    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan',
+                     check_feasibility=True):
         """A* Search. Priority queue ordered by f(n) = g(n) + h(n).
 
         Like UCS, but each node also carries a heuristic estimate of the
@@ -216,9 +260,13 @@ class SearchAgent:
 
             for d, nxt in self._neighbors(current_pos, walls, grid_size):
                 if nxt not in reached_states:
+                    # Lab 5, Step 3.2: physically reachable is no longer enough -
+                    # the KB must fail to deduce 'Retreat' for this tile.
+                    if check_feasibility and not self.is_feasible(nxt):
+                        continue               # infeasible: skip, never expand it
                     g_new = g_cost + 1
                     h_new = heuristic(nxt, goal_pos)
-                    f_new = g_new + h_newt
+                    f_new = g_new + h_new      # f(n) = g(n) + h(n)
                     heapq.heappush(frontier, (f_new, g_new, nxt, path_taken + [d]))
         return []                          # no path
 
@@ -242,23 +290,42 @@ class SearchAgent:
     def sense_and_act(self, percept: dict) -> str:
         self.facing = percept.get('facing', self.facing)  # resync heading with env
 
+        # Lab 5: refresh the raw world state the KB facts are built from.
+        self.known_food = [tuple(f) for f in percept.get('all_food', [])]
+        self.has_dust = percept.get('has_dust', False)
+        self.danger_zones = set(map(tuple, percept.get('danger_zones', [])))
+
         # 1) If we have no plan, form one with the selected search algorithm.
         if not self.plan:
-            foods = [tuple(f) for f in percept.get('all_food', [])]
+            foods = list(self.known_food)
             if not foods:
                 return 'Left'                              # nothing left: idle turn
-            # Pick the closest pellet by Manhattan distance.
-            goal = min(foods, key=lambda f: abs(f[0] - self.pos[0]) + abs(f[1] - self.pos[1]))
             walls = set(map(tuple, percept.get('walls', [])))
             grid_size = percept.get('grid_size', (0, 0))
             search = {'BFS': self.bfs_search,
                       'DFS': self.dfs_search,
                       'UCS': self.ucs_search,
                       'AStar': self.astar_search}[self.active_algo]
-            directions = search(self.pos, goal, walls, grid_size)
-            self.plan = self._directions_to_actions(directions)
-            # Executing the whole plan lands us on the pellet: dead-reckon there.
-            self.pos = goal
+            # Try pellets nearest-first: with the KB gate switched on a pellet can
+            # be reachable yet have no logically FEASIBLE route to it.
+            foods.sort(key=lambda f: self.manhattan_distance(self.pos, f))
+            for goal in foods:
+                directions = search(self.pos, goal, walls, grid_size)
+                if directions:
+                    self.plan = self._directions_to_actions(directions)
+                    # The whole plan lands us on the pellet: dead-reckon there.
+                    self.pos = goal
+                    break
+            else:
+                # No safe route to ANY pellet. Rather than freeze, fall back to
+                # plain physical reachability so the run can still finish.
+                if self.active_algo == 'AStar':
+                    goal = foods[0]
+                    directions = self.astar_search(self.pos, goal, walls, grid_size,
+                                                   check_feasibility=False)
+                    if directions:
+                        self.plan = self._directions_to_actions(directions)
+                        self.pos = goal
 
         if not self.plan:                                  # goal unreachable
             return 'Left'

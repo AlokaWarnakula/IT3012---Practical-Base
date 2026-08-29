@@ -11,3 +11,9 @@ cd "C:\Users\aloka\OneDrive\Desktop\IA Labs\Lab 01\lab02" && python -m unittest 
 
 lab 03
 cd "C:\Users\aloka\OneDrive\Desktop\IA Labs\Lab 01"; py visual_grid_game.py
+
+
+lab 05
+cd "C:\Users\aloka\OneDrive\Desktop\IA Labs\Lab 01"; py visual_grid_game.py
+cd "C:\Users\aloka\OneDrive\Desktop\IA Labs\Lab 01"; py test_logic.py
+cd "C:\Users\aloka\OneDrive\Desktop\IA Labs\Lab 01"; py -m unittest test_suite -v
